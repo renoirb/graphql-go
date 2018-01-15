@@ -191,6 +191,24 @@ func applyField(r *Request, e resolvable.Resolvable, sels []query.Selection) []S
 	}
 }
 
+// Attempt at validating if @date(as: String = "ago") directive has valid argument.
+// This should be bound somewhere so we can validate if Server schema declaration
+// and server resolver code matches.
+func agoTimeDirective(r *Request, directives common.DirectiveList) bool {
+	if d := directives.Get("date"); d != nil {
+		p := packer.ValuePacker{ValueType: reflect.TypeOf("")}
+		v, err := p.Pack(d.Args.MustGet("as").Value(r.Vars))
+		if err != nil {
+			r.AddError(errors.Errorf("%s", err))
+		}
+		if err == nil && v.String() != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
 func skipByDirective(r *Request, directives common.DirectiveList) bool {
 	if d := directives.Get("skip"); d != nil {
 		p := packer.ValuePacker{ValueType: reflect.TypeOf(false)}

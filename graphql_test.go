@@ -2,12 +2,16 @@ package graphql_test
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
 	"github.com/neelance/graphql-go"
 	"github.com/neelance/graphql-go/example/starwars"
 	"github.com/neelance/graphql-go/gqltesting"
+	"golang.org/x/text/feature/plural"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 )
 
 type helloWorldResolver1 struct{}
@@ -55,10 +59,39 @@ func (r *theNumberResolver) ChangeTheNumber(args struct{ NewNumber int32 }) *the
 	return r
 }
 
+func daysAgo(count int) string {
+	message.Set(language.English, "%d days ago",
+		plural.Selectf(count, "%d",
+			"=0", "today", // TODO, figure out why this won't pass
+			plural.One, "one day ago", // TODO, figure out why in some cases, we get 1 days ago instead of this one.
+			plural.Other, "%[1]d days ago",
+		))
+
+	pluralizator := message.NewPrinter(language.English)
+
+	return pluralizator.Sprintf("%d days ago", count)
+}
+
 type timeResolver struct{}
 
 func (r *timeResolver) AddHour(args struct{ Time graphql.Time }) graphql.Time {
 	return graphql.Time{Time: args.Time.Add(time.Hour)}
+}
+
+// TODO:
+// - Find where to bind to validate
+// - Allow declaring one of a value from an ENUM we want to support
+// - attachDirectivesToSchema of some sort, or to resolver, or to context?
+// - implement actual formatting directive that is less naive than daysAgo (above)
+// - ... Unknown unknowns.
+func (r *timeResolver) DaysAgo(ctx context.Context, args struct{ Time graphql.Time }) string {
+	//input := time.Now().Add(-48 * time.Hour)
+	input := args.Time.Time
+	count := int(math.Floor(math.Abs(input.Sub(time.Now()).Hours() / 24)))
+
+	outcome := daysAgo(count)
+
+	return outcome
 }
 
 var starwarsSchema = graphql.MustParseSchema(starwars.Schema, &starwars.Resolver{})
@@ -1482,21 +1515,40 @@ func TestTime(t *testing.T) {
 
 				type Query {
 					addHour(time: Time = "2001-02-03T04:05:06Z"): Time!
+					daysAgo(time: Time = "2001-02-03T04:05:06Z"): String!
 				}
 
 				scalar Time
-			`, &timeResolver{}),
+
+				# Supported @date directive formats
+				enum DateDirectiveFormats {
+					AGO
+					HUMAN_FRIENDLY_ALPHA
+					DATE_ISO8601
+					DATETIME_ISO8601
+				}
+
+				# Format Time field using a GraphQL directive
+				directive @date (
+					as: DateDirectiveFormats = AGO
+				) on FIELD
+				`, &timeResolver{}),
 			Query: `
-				query($t: Time!) {
+				query($t: Time!, $twodays: Time!) {
+					ago: daysAgo(time: $twodays)
+					directived: addHour(time: $twodays) @date(as: AGO)
 					a: addHour(time: $t)
 					b: addHour
 				}
 			`,
 			Variables: map[string]interface{}{
-				"t": time.Date(2000, 2, 3, 4, 5, 6, 0, time.UTC),
+				"t":       time.Date(2000, 2, 3, 4, 5, 6, 0, time.UTC),
+				"twodays": time.Now().Add(-49 * time.Hour),
 			},
 			ExpectedResult: `
 				{
+					"ago": "2 days ago",
+					"directived": "2 days ago",
 					"a": "2000-02-03T05:05:06Z",
 					"b": "2001-02-03T05:05:06Z"
 				}
